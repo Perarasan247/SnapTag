@@ -1,0 +1,11 @@
+node_modules/
+.expo/
+dist/
+build/
+.env
+*.log
+.DS_Store
+server_py/.venv/
+server_py/__pycache__/
+server_py/routers/__pycache__/
+*.pyc
