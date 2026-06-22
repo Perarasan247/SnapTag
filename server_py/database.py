@@ -31,6 +31,16 @@ def init_db():
     cur = conn.cursor()
     try:
         cur.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id         INT AUTO_INCREMENT PRIMARY KEY,
+                email      VARCHAR(255) NOT NULL UNIQUE,
+                password   VARCHAR(255) NOT NULL,
+                name       VARCHAR(255),
+                role       VARCHAR(50) DEFAULT 'user',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS files (
                 id           VARCHAR(60)  PRIMARY KEY,
                 user_id      INT          NOT NULL,
