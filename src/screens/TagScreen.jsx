@@ -19,10 +19,9 @@ import { useTheme } from '../contexts/ThemeContext';
 import { QUICK_TAGS } from '../constants/tags';
 import TagChip from '../components/TagChip';
 import * as FileSystem from 'expo-file-system/legacy';
-import { saveCapture, updateCaptureStatus } from '../services/storageService';
-import { uploadMedia, uploadMetadata, updateIndex } from '../services/s3Service';
+import { saveCapture } from '../services/storageService';
 import { incrementCaptureCount } from '../services/fileService';
-import { linkCaptureToItem, toggleItem } from '../services/checklistService';
+import { linkCaptureToItem } from '../services/checklistService';
 
 // Sub-component to handle video player hook without violating hook rules
 function VideoPreview({ uri, style }) {
@@ -281,16 +280,14 @@ export default function TagScreen({ route, navigation }) {
   const { theme } = useTheme();
   const styles = makeStyles(theme);
 
-  const { mediaUri, mediaType, gps, file, checklist } = route.params;
+  const { mediaUri, mediaType, gps, file, preLinkedItemId, preLinkedTemplateId, preLinkedTemplateName, preLinkedItemLabel } = route.params;
 
   // Form States
   const [tag, setTag] = useState('');
   const [notes, setNotes] = useState('');
-  const [linkedItemIds] = useState([]);
+  const [linkedItemIds] = useState(preLinkedItemId ? [preLinkedItemId] : []);
 
-  // Upload & Progress States
-  const [isUploading, setIsUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
+  const [isUploading] = useState(false);
 
   // Toast Notification State
   const [toastMessage, setToastMessage] = useState('');
@@ -333,10 +330,11 @@ export default function TagScreen({ route, navigation }) {
     const extension = mediaType === 'video' ? 'mp4' : 'jpg';
     const id = `${mediaType}_${timestamp}`;
     const filename = `${id}.${extension}`;
+    const folder = preLinkedItemId ? 'checklist' : 'standalone';
     return {
       id, filename,
-      s3DataKey: `${file.slug}/images/${filename}`,
-      s3MetadataKey: `${file.slug}/metadata/${id}.json`,
+      s3DataKey: `data/${file.slug}/images/${folder}/${filename}`,
+      s3MetadataKey: `data/${file.slug}/metadata/${id}.json`,
       type: mediaType,
       tag: activeTag,
       notes: activeNotes,
@@ -348,6 +346,10 @@ export default function TagScreen({ route, navigation }) {
       fileId: file.id,
       fileName: file.name,
       fileSlug: file.slug,
+      checklistItemId: preLinkedItemId || null,
+      checklistTemplateId: preLinkedTemplateId || null,
+      checklistTemplateName: preLinkedTemplateName || null,
+      checklistItemLabel: preLinkedItemLabel || null,
     };
   };
 
@@ -363,9 +365,6 @@ export default function TagScreen({ route, navigation }) {
   const linkToChecklist = async (captureId) => {
     for (const itemId of linkedItemIds) {
       await linkCaptureToItem(file.id, itemId, captureId);
-      // Also auto-check the item when a photo is linked to it
-      const prog = checklist?.progress?.[itemId];
-      if (prog && !prog.checked) await toggleItem(file.id, itemId);
     }
   };
 
@@ -379,56 +378,13 @@ export default function TagScreen({ route, navigation }) {
       await saveCapture({ ...metadata, localUri: permanentUri, deviceId });
       await incrementCaptureCount(file.id);
       await linkToChecklist(metadata.id);
-      navigation.navigate('InspectionHub', { file });
+      navigation.pop(2); // pops TagScreen + CameraScreen → lands on InspectionHub
     } catch (error) {
       console.error('Local save failed:', error);
       triggerToast('Failed to save locally');
     }
   };
 
-  const handleSaveAndUpload = async () => {
-    if (isUploading) return;
-
-    setIsUploading(true);
-    setUploadProgress(0);
-
-    const activeTag = tag.trim();
-    const deviceId = await getOrGenerateDeviceId();
-    const metadata = buildCaptureMetadata(activeTag, notes.trim(), 'uploading');
-
-    try {
-      const permanentUri = await copyToPermanentStorage(mediaUri, metadata.filename);
-      const savedMetadata = { ...metadata, localUri: permanentUri, deviceId };
-      await saveCapture(savedMetadata);
-
-      await uploadMedia(permanentUri, metadata.s3DataKey, (progress) => {
-        setUploadProgress(progress);
-      });
-
-      const finalMetadata = {
-        ...savedMetadata,
-        uploadStatus: 'uploaded',
-        uploadedAt: new Date().toISOString(),
-      };
-      await uploadMetadata(finalMetadata, metadata.s3MetadataKey);
-      await updateIndex(finalMetadata);
-      await updateCaptureStatus(metadata.id, 'uploaded');
-      await incrementCaptureCount(file.id);
-      await linkToChecklist(metadata.id);
-
-      setIsUploading(false);
-      navigation.navigate('InspectionHub', { file });
-    } catch (error) {
-      console.error('Upload sequence failed:', error);
-      try {
-        await updateCaptureStatus(metadata.id, 'failed');
-      } catch (_) {}
-
-      setIsUploading(false);
-      triggerToast('Saved locally — upload failed');
-      setTimeout(() => navigation.navigate('InspectionHub', { file }), 1500);
-    }
-  };
 
   return (
     <KeyboardAvoidingView
@@ -452,7 +408,7 @@ export default function TagScreen({ route, navigation }) {
 
       {/* Back button */}
       <SafeAreaView style={styles.backBar}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
+        <TouchableOpacity style={styles.backBtn} onPress={() => navigation.pop(2)}>
           <MaterialCommunityIcons name="chevron-left" size={24} color="#fff" />
           <Text style={styles.backBtnText}>Back</Text>
         </TouchableOpacity>
@@ -544,24 +500,15 @@ export default function TagScreen({ route, navigation }) {
             onPress={handleSaveLocal}
             disabled={isUploading}
           >
-            <Text style={styles.saveButtonText}>Save to Gallery</Text>
+            <Text style={styles.saveButtonText}>Save</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             style={[styles.localButton, isUploading && styles.saveButtonDisabled]}
-            onPress={handleSaveAndUpload}
+            onPress={() => navigation.pop(2)}
             disabled={isUploading}
           >
-            <MaterialCommunityIcons name="cloud-upload-outline" size={16} color={theme.textSecondary} style={{ marginRight: 7 }} />
-            <Text style={styles.localButtonText}>Save to Gallery + S3</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.skipBtn}
-            onPress={() => navigation.goBack()}
-            disabled={isUploading}
-          >
-            <Text style={styles.skipBtnText}>Skip — discard & go back</Text>
+            <Text style={styles.localButtonText}>Discard</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>

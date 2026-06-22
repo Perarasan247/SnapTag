@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef } from 'react';
 import {
   StyleSheet, View, Text, TextInput, TouchableOpacity,
   ScrollView, StatusBar, ActivityIndicator, KeyboardAvoidingView, Platform,
@@ -7,8 +7,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useTheme } from '../contexts/ThemeContext';
 import { saveCapture } from '../services/storageService';
-import { getFileChecklist, toggleItem } from '../services/checklistService';
-import { getTemplateById } from '../constants/checklists';
 
 const UNITS = [
   { id: 'm',     label: 'm',     name: 'Metres' },
@@ -45,34 +43,6 @@ const makeStyles = (theme) => StyleSheet.create({
     alignSelf: 'flex-start', marginBottom: 16,
   },
   filePillText: { color: theme.textSecondary, fontSize: 12 },
-
-  // Checklist section
-  clSection: {
-    backgroundColor: theme.surface, borderWidth: 1, borderColor: theme.warning + '44',
-    borderRadius: theme.borderRadius.md, marginBottom: 20, overflow: 'hidden',
-  },
-  clSectionHeader: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    paddingHorizontal: 14, paddingVertical: 12,
-  },
-  clSectionTitle: { color: theme.warning, fontSize: 13, fontWeight: '600', flex: 1 },
-  clLinkedDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: theme.warning },
-  clItems: { borderTopWidth: 1, borderTopColor: theme.border },
-  clItem: {
-    flexDirection: 'row', alignItems: 'center', gap: 10,
-    paddingHorizontal: 14, paddingVertical: 12,
-    borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.04)',
-  },
-  clItemLinked: { backgroundColor: theme.warningSubtle },
-  clItemDone: { opacity: 0.5 },
-  clItemLabel: { color: theme.textPrimary, fontSize: 13 },
-  clItemLabelDone: { textDecorationLine: 'line-through', color: theme.textSecondary },
-  clItemTemplate: { color: theme.textMuted, fontSize: 10, marginTop: 1 },
-  clLinkedTag: {
-    color: theme.warning, fontSize: 10, fontWeight: '700',
-    borderWidth: 1, borderColor: theme.warning + '55',
-    borderRadius: theme.borderRadius.full, paddingHorizontal: 8, paddingVertical: 2,
-  },
 
   fieldGroup: { marginBottom: 24 },
   fieldLabel: {
@@ -122,6 +92,21 @@ const makeStyles = (theme) => StyleSheet.create({
   previewValue: { color: theme.textPrimary, fontSize: 40, fontWeight: '700', lineHeight: 48 },
   previewUnit: { color: theme.warning, fontSize: 18, fontWeight: '600' },
   previewNotes: { color: theme.textSecondary, fontSize: 13, marginTop: 4, fontStyle: 'italic' },
+  bottomBar: {
+    flexDirection: 'row', gap: 10, paddingHorizontal: 16, paddingVertical: 14,
+    borderTopWidth: 1, borderTopColor: theme.border, backgroundColor: theme.surface,
+  },
+  discardBtn: {
+    flex: 1, height: 48, borderRadius: theme.borderRadius.sm,
+    borderWidth: 1, borderColor: theme.border, justifyContent: 'center', alignItems: 'center',
+  },
+  discardText: { color: theme.textSecondary, fontSize: 15, fontWeight: '600' },
+  saveBottomBtn: {
+    flex: 2, height: 48, borderRadius: theme.borderRadius.sm,
+    backgroundColor: theme.warning, justifyContent: 'center', alignItems: 'center',
+  },
+  saveBottomBtnDisabled: { opacity: 0.4 },
+  saveBottomText: { color: '#000', fontSize: 15, fontWeight: '700' },
 });
 
 export default function MeasurementEntryScreen({ navigation, route }) {
@@ -135,25 +120,6 @@ export default function MeasurementEntryScreen({ navigation, route }) {
   const [saving, setSaving] = useState(false);
   const valueRef = useRef(null);
 
-  const [checklistItems, setChecklistItems] = useState([]);
-  const [linkedItemId, setLinkedItemId] = useState(null);
-  const [showChecklist, setShowChecklist] = useState(true);
-
-  useEffect(() => {
-    getFileChecklist(file.id).then((cl) => {
-      if (!cl) return;
-      const items = [];
-      for (const tid of cl.templateIds || []) {
-        const t = getTemplateById(tid);
-        if (t) for (const it of t.items) items.push({ ...it, templateName: t.name, checked: cl.progress?.[it.id]?.checked || false });
-      }
-      for (const ci of cl.customItems || []) {
-        items.push({ ...ci, templateName: 'Custom', checked: cl.progress?.[ci.id]?.checked || false });
-      }
-      setChecklistItems(items);
-    });
-  }, [file.id]);
-
   const canSave = label.trim().length > 0 && value.trim().length > 0;
 
   const handleSave = async () => {
@@ -161,8 +127,9 @@ export default function MeasurementEntryScreen({ navigation, route }) {
     setSaving(true);
     try {
       const timestamp = Date.now();
+      const id = `meas_${timestamp}`;
       await saveCapture({
-        id: `meas_${timestamp}`,
+        id,
         fileId: file.id,
         filename: `measurement_${timestamp}.json`,
         type: 'measurement',
@@ -172,23 +139,17 @@ export default function MeasurementEntryScreen({ navigation, route }) {
         unit: unit,
         fileSlug: file.slug,
         fileName: file.name,
+        s3DataKey: `data/${file.slug}/data/${id}.json`,
+        s3MetadataKey: `data/${file.slug}/metadata/${id}.json`,
         uploadStatus: 'local',
         capturedAt: new Date(timestamp).toISOString(),
       });
-      if (linkedItemId) {
-        await toggleItem(file.id, linkedItemId);
-      }
       navigation.goBack();
     } catch (e) {
       console.error('Failed to save measurement:', e);
     } finally {
       setSaving(false);
     }
-  };
-
-  const pickChecklistItem = (item) => {
-    setLabel(item.label);
-    setLinkedItemId(item.id === linkedItemId ? null : item.id);
   };
 
   const selectedUnit = UNITS.find((u) => u.id === unit) || UNITS[0];
@@ -201,16 +162,10 @@ export default function MeasurementEntryScreen({ navigation, route }) {
         {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity style={styles.headerBtn} onPress={() => navigation.goBack()}>
-            <MaterialCommunityIcons name="close" size={22} color={theme.textPrimary} />
+            <MaterialCommunityIcons name="chevron-left" size={24} color={theme.textPrimary} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Measurement</Text>
-          <TouchableOpacity
-            style={[styles.saveBtn, !canSave && styles.saveBtnDisabled]}
-            onPress={handleSave}
-            disabled={!canSave || saving}
-          >
-            {saving ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.saveBtnText}>Save</Text>}
-          </TouchableOpacity>
+          <View style={{ minWidth: 40 }} />
         </View>
 
         <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
@@ -220,46 +175,6 @@ export default function MeasurementEntryScreen({ navigation, route }) {
             <MaterialCommunityIcons name="folder" size={13} color="#93b4f0" />
             <Text style={styles.filePillText} numberOfLines={1}>{file.name}</Text>
           </View>
-
-          {/* Checklist quick-pick */}
-          {checklistItems.length > 0 && (
-            <View style={styles.clSection}>
-              <TouchableOpacity style={styles.clSectionHeader} onPress={() => setShowChecklist(!showChecklist)}>
-                <MaterialCommunityIcons name="format-list-checks" size={15} color={theme.warning} />
-                <Text style={styles.clSectionTitle}>From checklist</Text>
-                {linkedItemId && <View style={styles.clLinkedDot} />}
-                <MaterialCommunityIcons
-                  name={showChecklist ? 'chevron-up' : 'chevron-down'}
-                  size={16} color={theme.textMuted}
-                />
-              </TouchableOpacity>
-              {showChecklist && (
-                <View style={styles.clItems}>
-                  {checklistItems.map((item) => {
-                    const linked = linkedItemId === item.id;
-                    return (
-                      <TouchableOpacity
-                        key={item.id}
-                        style={[styles.clItem, linked && styles.clItemLinked, item.checked && styles.clItemDone]}
-                        onPress={() => pickChecklistItem(item)}
-                      >
-                        <MaterialCommunityIcons
-                          name={item.checked ? 'checkbox-marked' : linked ? 'checkbox-intermediate' : 'checkbox-blank-outline'}
-                          size={18}
-                          color={item.checked ? theme.success : linked ? theme.warning : theme.textMuted}
-                        />
-                        <View style={{ flex: 1 }}>
-                          <Text style={[styles.clItemLabel, item.checked && styles.clItemLabelDone]}>{item.label}</Text>
-                          <Text style={styles.clItemTemplate}>{item.templateName}</Text>
-                        </View>
-                        {linked && <Text style={styles.clLinkedTag}>will check</Text>}
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              )}
-            </View>
-          )}
 
           {/* Label */}
           <View style={styles.fieldGroup}>
@@ -271,7 +186,7 @@ export default function MeasurementEntryScreen({ navigation, route }) {
               placeholder="e.g. Room Width, Toilet Count, Door Height…"
               placeholderTextColor={theme.textMuted}
               autoCapitalize="words"
-              autoFocus={checklistItems.length === 0}
+              autoFocus
               returnKeyType="next"
               onSubmitEditing={() => valueRef.current?.focus()}
             />
@@ -345,6 +260,19 @@ export default function MeasurementEntryScreen({ navigation, route }) {
             </View>
           ) : null}
         </ScrollView>
+
+        <View style={styles.bottomBar}>
+          <TouchableOpacity style={styles.discardBtn} onPress={() => navigation.goBack()} disabled={saving}>
+            <Text style={styles.discardText}>Discard</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.saveBottomBtn, !canSave && styles.saveBottomBtnDisabled]}
+            onPress={handleSave}
+            disabled={!canSave || saving}
+          >
+            {saving ? <ActivityIndicator size="small" color="#000" /> : <Text style={styles.saveBottomText}>Save</Text>}
+          </TouchableOpacity>
+        </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );

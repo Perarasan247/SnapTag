@@ -6,7 +6,7 @@ import CryptoJS from 'crypto-js';
  * @param {string} key - S3 object key (e.g. "data/photo_123.jpg")
  * @returns {string} The local presigned URL.
  */
-const generateLocalPresignedUrl = (key) => {
+const generateLocalPresignedUrl = (key, contentType = null) => {
   const accessKeyId = process.env.EXPO_PUBLIC_AWS_ACCESS_KEY_ID;
   const secretAccessKey = process.env.EXPO_PUBLIC_AWS_SECRET_ACCESS_KEY;
   const sessionToken = process.env.EXPO_PUBLIC_AWS_SESSION_TOKEN;
@@ -19,40 +19,39 @@ const generateLocalPresignedUrl = (key) => {
 
   const expires = 900; // 15 minutes
   const now = new Date();
-  
-  // Format dates: amzDate (YYYYMMDDTHHMMSSZ), dateStamp (YYYYMMDD)
+
   const amzDate = now.toISOString().replace(/[:-]/g, '').split('.')[0] + 'Z';
   const dateStamp = amzDate.substring(0, 8);
 
   const host = `${bucket}.s3.${region}.amazonaws.com`;
-  
-  // URL encode path segments
   const canonicalUri = '/' + key.split('/').map(encodeURIComponent).join('/');
 
-  // Set up Query parameters
+  // Include content-type in signed headers so S3 accepts the Content-Type header
+  const signedHeaders = contentType ? 'content-type;host' : 'host';
+
   const queryParams = {
     'X-Amz-Algorithm': 'AWS4-HMAC-SHA256',
     'X-Amz-Credential': `${accessKeyId}/${dateStamp}/${region}/s3/aws4_request`,
     'X-Amz-Date': amzDate,
     'X-Amz-Expires': expires.toString(),
-    'X-Amz-SignedHeaders': 'host'
+    'X-Amz-SignedHeaders': signedHeaders,
   };
 
   if (sessionToken) {
     queryParams['X-Amz-Security-Token'] = sessionToken;
   }
 
-  // Sort query parameters
   const sortedKeys = Object.keys(queryParams).sort();
   const canonicalQueryString = sortedKeys
     .map(k => `${encodeURIComponent(k)}=${encodeURIComponent(queryParams[k])}`)
     .join('&');
 
-  const canonicalHeaders = `host:${host}\n`;
-  const signedHeaders = 'host';
+  const canonicalHeaders = contentType
+    ? `content-type:${contentType}\nhost:${host}\n`
+    : `host:${host}\n`;
+
   const payloadHash = 'UNSIGNED-PAYLOAD';
 
-  // Build canonical request
   const canonicalRequest = [
     'PUT',
     canonicalUri,
@@ -91,9 +90,9 @@ const generateLocalPresignedUrl = (key) => {
  * @param {string} key - The target S3 key (e.g., "data/photo_123.jpg")
  * @returns {Promise<string>} The presigned URL.
  */
-export const getPresignedUrl = async (key) => {
+export const getPresignedUrl = async (key, contentType = null) => {
   try {
-    return generateLocalPresignedUrl(key);
+    return generateLocalPresignedUrl(key, contentType);
   } catch (error) {
     console.error('Error generating local presigned URL:', error);
     throw error;
@@ -110,9 +109,11 @@ export const getPresignedUrl = async (key) => {
  */
 export const uploadMedia = async (localUri, key, onProgress) => {
   try {
-    const presignedUrl = await getPresignedUrl(key);
     const extension = key.split('.').pop().toLowerCase();
-    const mimeType = extension === 'mp4' ? 'video/mp4' : 'image/jpeg';
+    const mimeType = extension === 'mp4' ? 'video/mp4'
+      : extension === 'mov' ? 'video/quicktime'
+      : 'image/jpeg';
+    const presignedUrl = await getPresignedUrl(key, mimeType);
     const bucket = process.env.EXPO_PUBLIC_S3_BUCKET || 'alix-aiml';
     const region = process.env.EXPO_PUBLIC_S3_REGION || 'us-east-1';
 
@@ -162,7 +163,7 @@ export const uploadMedia = async (localUri, key, onProgress) => {
  */
 export const uploadMetadata = async (metadataObject, key) => {
   try {
-    const presignedUrl = await getPresignedUrl(key);
+    const presignedUrl = await getPresignedUrl(key, 'application/json');
 
     const response = await fetch(presignedUrl, {
       method: 'PUT',
@@ -195,7 +196,7 @@ export const updateIndex = async (newEntry) => {
   try {
     const bucket = process.env.EXPO_PUBLIC_S3_BUCKET || 'alix-aiml';
     const region = process.env.EXPO_PUBLIC_S3_REGION || 'us-east-1';
-    const indexKey = `${newEntry.fileSlug}/index.json`;
+    const indexKey = `data/${newEntry.fileSlug}/index.json`;
     
     // Fetch index.json from public URL
     const indexUrl = `https://${bucket}.s3.${region}.amazonaws.com/${indexKey}`;
@@ -226,10 +227,12 @@ export const updateIndex = async (newEntry) => {
     const existingIndex = currentIndex.findIndex(item => item.id === newEntry.id);
     const indexEntry = {
       id: newEntry.id,
+      type: newEntry.type,
       tag: newEntry.tag,
       filename: newEntry.filename,
       capturedAt: newEntry.capturedAt,
-      uploadStatus: newEntry.uploadStatus
+      uploadStatus: newEntry.uploadStatus,
+      checklistItemId: newEntry.checklistItemId || null,
     };
 
     if (existingIndex >= 0) {

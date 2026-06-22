@@ -13,6 +13,7 @@ def row_to_checklist(row: dict) -> dict:
         "fileId": row["file_id"],
         "templateIds": json.loads(row["template_ids"]) if row["template_ids"] else [],
         "customItems": json.loads(row["custom_items"]) if row["custom_items"] else [],
+        "customTemplates": json.loads(row["custom_templates"]) if row.get("custom_templates") else [],
         "progress": json.loads(row["progress_data"]) if row["progress_data"] else {},
         "completedAt": row["completed_at"].isoformat() if row["completed_at"] else None,
     }
@@ -21,6 +22,7 @@ def row_to_checklist(row: dict) -> dict:
 class ChecklistBody(BaseModel):
     templateIds: list = []
     customItems: list = []
+    customTemplates: list = []
     progress: dict = {}
     completedAt: Optional[str] = None
 
@@ -48,17 +50,19 @@ def upsert_checklist(file_id: str, body: ChecklistBody, user=Depends(get_current
     try:
         completed = body.completedAt if body.completedAt else None
         cur.execute("""
-            INSERT INTO checklists (file_id, user_id, template_ids, custom_items, progress_data, completed_at)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO checklists (file_id, user_id, template_ids, custom_items, custom_templates, progress_data, completed_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             ON DUPLICATE KEY UPDATE
-              template_ids  = VALUES(template_ids),
-              custom_items  = VALUES(custom_items),
-              progress_data = VALUES(progress_data),
-              completed_at  = VALUES(completed_at)
+              template_ids     = VALUES(template_ids),
+              custom_items     = VALUES(custom_items),
+              custom_templates = VALUES(custom_templates),
+              progress_data    = VALUES(progress_data),
+              completed_at     = VALUES(completed_at)
         """, (
             file_id, user["userId"],
             json.dumps(body.templateIds),
             json.dumps(body.customItems),
+            json.dumps(body.customTemplates),
             json.dumps(body.progress),
             completed
         ))

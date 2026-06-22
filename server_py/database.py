@@ -103,6 +103,13 @@ def init_db():
         )
         if cur.fetchone()[0] == 0:
             cur.execute("ALTER TABLE files ADD COLUMN deleted_at TIMESTAMP NULL DEFAULT NULL")
+        # Add custom_templates column for user-defined checklist templates
+        cur.execute(
+            "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=%s AND TABLE_NAME='checklists' AND COLUMN_NAME='custom_templates'",
+            (db_name,)
+        )
+        if cur.fetchone()[0] == 0:
+            cur.execute("ALTER TABLE checklists ADD COLUMN custom_templates TEXT NULL DEFAULT NULL")
         conn.commit()
         print("[DB] Tables ready")
     finally:

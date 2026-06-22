@@ -39,6 +39,8 @@ export const updateCapture = async (id, changes) => {
   const body = {};
   if (changes.tag !== undefined) body.tag = changes.tag;
   if (changes.notes !== undefined) body.notes = changes.notes;
+  if (changes.content !== undefined) body.content = changes.content;
+  if (changes.unit !== undefined) body.unit = changes.unit;
   if (changes.uploadStatus !== undefined) body.uploadStatus = changes.uploadStatus;
   return await api('PUT', `/captures/${id}`, body);
 };

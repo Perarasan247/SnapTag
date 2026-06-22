@@ -119,7 +119,7 @@ const makeStyles = (theme) => StyleSheet.create({
 export default function CameraScreen({ navigation, route }) {
   const { theme } = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
-  const { file } = route.params;
+  const { file, preLinkedItemId, preLinkedTemplateId, preLinkedTemplateName, preLinkedItemLabel } = route.params;
   const isFocused = useIsFocused();
   const cameraRef = useRef(null);
 
@@ -144,6 +144,7 @@ export default function CameraScreen({ navigation, route }) {
   const flashAnim = useRef(new Animated.Value(0)).current;
   const recOpacity = useRef(new Animated.Value(1)).current;
   const recAnimationRef = useRef(null);
+  const gpsPromiseRef = useRef(null);
 
   useEffect(() => {
     Location.getForegroundPermissionsAsync()
@@ -300,7 +301,7 @@ export default function CameraScreen({ navigation, route }) {
       await triggerFlashAnimation();
       const gps = await gpsPromise;
       setIsCapturing(false);
-      navigation.navigate('Tag', { mediaUri: photo.uri, mediaType: 'photo', gps, file, checklist });
+      navigation.navigate('Tag', { mediaUri: photo.uri, mediaType: 'photo', gps, file, checklist, preLinkedItemId, preLinkedTemplateId, preLinkedTemplateName, preLinkedItemLabel });
     } catch (e) {
       setIsCapturing(false);
       console.error('Photo capture failed:', e);
@@ -311,25 +312,24 @@ export default function CameraScreen({ navigation, route }) {
     if (!cameraRef.current || isRecording || isCapturing) return;
     try {
       setIsRecording(true);
-      const gpsPromise = getGps();
-      cameraRef.current._gpsPromise = gpsPromise;
+      gpsPromiseRef.current = getGps();
       const video = await cameraRef.current.recordAsync({ maxDuration: 60 });
-      const gps = await cameraRef.current._gpsPromise;
-      await triggerFlashAnimation();
-      setIsRecording(false);
-      navigation.navigate('Tag', { mediaUri: video.uri, mediaType: 'video', gps, file, checklist });
+      const gps = await (gpsPromiseRef.current ?? Promise.resolve(null));
+      navigation.navigate('Tag', { mediaUri: video.uri, mediaType: 'video', gps, file, checklist, preLinkedItemId, preLinkedTemplateId, preLinkedTemplateName, preLinkedItemLabel });
     } catch (e) {
-      setIsRecording(false);
       console.error('Video recording failed:', e);
+    } finally {
+      setIsRecording(false);
     }
   };
 
-  const stopVideoRecording = async () => {
+  const stopVideoRecording = () => {
     if (!cameraRef.current || !isRecording) return;
+    setIsRecording(false);
     try {
-      await cameraRef.current.stopRecording();
+      cameraRef.current.stopRecording();
     } catch (e) {
-      setIsRecording(false);
+      console.error('Stop recording error:', e);
     }
   };
 

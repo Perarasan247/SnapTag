@@ -239,6 +239,15 @@ const makeStyles = (theme) => StyleSheet.create({
   linkedItemLabel: { color: theme.textPrimary, fontSize: 13 },
   linkedItemTemplate: { color: theme.textMuted, fontSize: 11, marginTop: 1 },
   linkedItemNote: { color: theme.textSecondary, fontSize: 12, marginTop: 3, fontStyle: 'italic' },
+  uploadBar: {
+    paddingHorizontal: 16, paddingVertical: 12,
+    borderTopWidth: 1, borderTopColor: theme.border, backgroundColor: theme.surface,
+  },
+  uploadBarBtn: {
+    flexDirection: 'row', height: 48, borderRadius: theme.borderRadius.md,
+    backgroundColor: theme.accent, alignItems: 'center', justifyContent: 'center', gap: 8,
+  },
+  uploadBarBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
   modalActions: { padding: 16, gap: 12, borderTopWidth: 1, borderTopColor: theme.border, backgroundColor: theme.surface },
   actionBtn: { flexDirection: 'row', height: 48, borderRadius: theme.borderRadius.sm, justifyContent: 'center', alignItems: 'center', gap: 8, width: '100%' },
   retryBtn: { backgroundColor: theme.accent },
@@ -262,9 +271,12 @@ export default function LibraryScreen({ navigation, route }) {
   const [activeFilter, setActiveFilter] = useState('All');
   const [selectedItem, setSelectedItem] = useState(null);
   const [isRetrying, setIsRetrying] = useState(false);
+  const [isUploadingAll, setIsUploadingAll] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editTag, setEditTag] = useState('');
   const [editNotes, setEditNotes] = useState('');
+  const [editContent, setEditContent] = useState('');
+  const [editUnit, setEditUnit] = useState('');
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [checklist, setChecklist] = useState(null);
 
@@ -314,9 +326,15 @@ export default function LibraryScreen({ navigation, route }) {
     if (selectedItem?.id === item.id) setSelectedItem((p) => ({ ...p, uploadStatus: 'uploading' }));
     try {
       await updateCaptureStatus(item.id, 'uploading');
-      await uploadMedia(item.localUri, item.s3DataKey, () => {});
+      const isMedia = item.type === 'photo' || item.type === 'video';
+      if (isMedia && item.localUri && item.s3DataKey) {
+        await uploadMedia(item.localUri, item.s3DataKey, () => {});
+      } else if (!isMedia && item.s3DataKey) {
+        const dataPayload = { id: item.id, type: item.type, tag: item.tag, content: item.content, unit: item.unit, notes: item.notes, capturedAt: item.capturedAt };
+        await uploadMetadata(dataPayload, item.s3DataKey);
+      }
       const final = { ...item, uploadStatus: 'uploaded', uploadedAt: new Date().toISOString() };
-      await uploadMetadata(final, item.s3MetadataKey);
+      if (item.s3MetadataKey) await uploadMetadata(final, item.s3MetadataKey);
       await updateIndex(final);
       await updateCaptureStatus(item.id, 'uploaded');
       triggerToast('Upload successful!');
@@ -339,17 +357,99 @@ export default function LibraryScreen({ navigation, route }) {
     } catch { triggerToast('Error deleting item'); }
   };
 
+  const openEdit = (item) => {
+    setEditTag(item.tag || '');
+    setEditNotes(item.notes || '');
+    setEditContent(item.content || '');
+    setEditUnit(item.unit || '');
+    setIsEditing(true);
+  };
+
   const handleSaveEdit = async () => {
     if (!selectedItem || isSavingEdit) return;
     setIsSavingEdit(true);
     try {
-      const updated = await updateCapture(selectedItem.id, { tag: editTag.trim(), notes: editNotes.trim() });
+      const changes = { tag: editTag.trim(), notes: editNotes.trim() };
+      if (selectedItem.type === 'text') changes.content = editContent.trim();
+      if (selectedItem.type === 'measurement') {
+        changes.content = editContent.trim();
+        changes.unit = editUnit.trim();
+      }
+      const updated = await updateCapture(selectedItem.id, changes);
       setSelectedItem(updated);
       setCaptures((prev) => prev.map((c) => c.id === updated.id ? updated : c));
       setIsEditing(false);
       triggerToast('Changes saved');
     } catch { triggerToast('Failed to save'); }
     finally { setIsSavingEdit(false); }
+  };
+
+  const handleUploadAllToS3 = async () => {
+    if (isUploadingAll) return;
+    // Include text/measurement (no localUri) — only exclude already-uploaded
+    const pending = captures.filter((c) =>
+      c.uploadStatus === 'local' || c.uploadStatus === 'failed'
+    );
+    if (pending.length === 0 && !checklist) { triggerToast('Everything already uploaded'); return; }
+    setIsUploadingAll(true);
+    let uploaded = 0;
+
+    // Upload captures
+    for (const item of pending) {
+      try {
+        await updateCaptureStatus(item.id, 'uploading');
+        const isMedia = item.type === 'photo' || item.type === 'video';
+        if (isMedia && item.localUri && item.s3DataKey) {
+          await uploadMedia(item.localUri, item.s3DataKey, () => {});
+        } else if (!isMedia && item.s3DataKey) {
+          const dataPayload = { id: item.id, type: item.type, tag: item.tag, content: item.content, unit: item.unit, notes: item.notes, capturedAt: item.capturedAt };
+          await uploadMetadata(dataPayload, item.s3DataKey);
+        }
+        const final = { ...item, uploadStatus: 'uploaded', uploadedAt: new Date().toISOString() };
+        if (item.s3MetadataKey) await uploadMetadata(final, item.s3MetadataKey);
+        await updateIndex(final);
+        await updateCaptureStatus(item.id, 'uploaded');
+        uploaded++;
+      } catch {
+        await updateCaptureStatus(item.id, 'failed');
+      }
+    }
+
+    // Upload checklist progress (remarks + checked state) per template
+    if (checklist && activeFile) {
+      const templateIds = activeFile.checklistTemplateIds || [];
+      const customTemplates = checklist.customTemplates || [];
+      const allTemplates = [
+        ...templateIds.map((tid) => {
+          const t = CHECKLIST_TEMPLATES.find((ct) => ct.id === tid);
+          return t || null;
+        }).filter(Boolean),
+        ...customTemplates,
+      ];
+      for (const tmpl of allTemplates) {
+        try {
+          const prog = checklist.progress || {};
+          const payload = {
+            templateId: tmpl.id,
+            templateName: tmpl.name,
+            siteSlug: activeFile.slug,
+            exportedAt: new Date().toISOString(),
+            items: (tmpl.items || []).map((item) => ({
+              id: item.id,
+              label: item.label,
+              checked: prog[item.id]?.checked || false,
+              remark: prog[item.id]?.note || '',
+              linkedCaptureIds: prog[item.id]?.captureIds || [],
+            })),
+          };
+          await uploadMetadata(payload, `data/${activeFile.slug}/checklist/${tmpl.id}.json`);
+        } catch (e) { console.error('Checklist upload failed', tmpl.id, e); }
+      }
+    }
+
+    await loadCaptures();
+    triggerToast(`Uploaded ${uploaded}/${pending.length} captures + checklist`);
+    setIsUploadingAll(false);
   };
 
   const filteredCaptures = captures.filter((c) =>
@@ -391,10 +491,6 @@ export default function LibraryScreen({ navigation, route }) {
   }
 
   // ─── CAPTURES VIEW ────────────────────────────────────────────────────────
-  const checklistItems = Object.values(checklist?.progress || {});
-  const checklistChecked = checklistItems.filter((i) => i.checked).length;
-  const checklistTotal = checklistItems.length;
-  const checklistDone = checklistTotal > 0 && checklistChecked === checklistTotal;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -420,20 +516,7 @@ export default function LibraryScreen({ navigation, route }) {
           <MaterialCommunityIcons name="chevron-down" size={16} color={theme.textSecondary} />
         </TouchableOpacity>
 
-        {checklist ? (
-          <View style={[styles.clBadge, checklistDone && styles.clBadgeDone]}>
-            <MaterialCommunityIcons
-              name={checklistDone ? 'check-circle' : 'format-list-checks'}
-              size={11}
-              color={checklistDone ? theme.success : theme.textSecondary}
-            />
-            <Text style={[styles.clBadgeText, checklistDone && styles.clBadgeTextDone]}>
-              {checklistChecked}/{checklistTotal}
-            </Text>
-          </View>
-        ) : (
-          <Text style={styles.headerCount}>{captures.length > 0 ? captures.length : ''}</Text>
-        )}
+        <Text style={styles.headerCount}>{captures.length > 0 ? captures.length : ''}</Text>
       </View>
 
       {/* File switcher dropdown */}
@@ -526,6 +609,18 @@ export default function LibraryScreen({ navigation, route }) {
         </ScrollView>
       )}
 
+      {/* Upload to S3 bar */}
+      <View style={styles.uploadBar}>
+        <TouchableOpacity style={styles.uploadBarBtn} onPress={handleUploadAllToS3} disabled={isUploadingAll}>
+          {isUploadingAll
+            ? <ActivityIndicator size="small" color="#fff" />
+            : <MaterialCommunityIcons name="cloud-upload-outline" size={20} color="#fff" />}
+          <Text style={styles.uploadBarBtnText}>
+            {isUploadingAll ? 'Uploading…' : 'Upload Site to S3'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+
       {/* Capture detail modal */}
       <Modal visible={selectedItem !== null} animationType="slide" transparent={false} onRequestClose={() => setSelectedItem(null)}>
         {selectedItem && (
@@ -540,7 +635,7 @@ export default function LibraryScreen({ navigation, route }) {
                   <Text style={styles.cancelEditText}>Cancel</Text>
                 </TouchableOpacity>
               ) : (
-                <TouchableOpacity style={styles.backBtn} onPress={() => { setEditTag(selectedItem.tag || ''); setEditNotes(selectedItem.notes || ''); setIsEditing(true); }}>
+                <TouchableOpacity style={styles.backBtn} onPress={() => openEdit(selectedItem)}>
                   <MaterialCommunityIcons name="pencil-outline" size={20} color={theme.accent} />
                 </TouchableOpacity>
               )}
@@ -606,6 +701,27 @@ export default function LibraryScreen({ navigation, route }) {
                     <Text style={styles.sectionLabel}>{selectedItem.type === 'measurement' ? 'Label' : 'Title'}</Text>
                     <TextInput style={styles.editInput} value={editTag} onChangeText={setEditTag}
                       placeholder="Title…" placeholderTextColor={theme.textMuted} autoCapitalize="words" />
+
+                    {(selectedItem.type === 'text') && (
+                      <>
+                        <Text style={[styles.sectionLabel, { marginTop: 16 }]}>Content</Text>
+                        <TextInput style={[styles.editInput, styles.editNotesInput]} value={editContent}
+                          onChangeText={setEditContent} placeholder="Note content…" placeholderTextColor={theme.textMuted}
+                          multiline textAlignVertical="top" />
+                      </>
+                    )}
+
+                    {(selectedItem.type === 'measurement') && (
+                      <>
+                        <Text style={[styles.sectionLabel, { marginTop: 16 }]}>Value</Text>
+                        <TextInput style={styles.editInput} value={editContent} onChangeText={setEditContent}
+                          placeholder="0" placeholderTextColor={theme.textMuted} keyboardType="decimal-pad" />
+                        <Text style={[styles.sectionLabel, { marginTop: 16 }]}>Unit</Text>
+                        <TextInput style={styles.editInput} value={editUnit} onChangeText={setEditUnit}
+                          placeholder="m, kg, count…" placeholderTextColor={theme.textMuted} autoCapitalize="none" />
+                      </>
+                    )}
+
                     <Text style={[styles.sectionLabel, { marginTop: 16 }]}>Notes</Text>
                     <TextInput style={[styles.editInput, styles.editNotesInput]} value={editNotes}
                       onChangeText={setEditNotes} placeholder="Add notes…" placeholderTextColor={theme.textMuted}

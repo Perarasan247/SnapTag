@@ -11,6 +11,7 @@ const save = async (fileId, state) => {
   return await api('PUT', `/checklists/${fileId}`, {
     templateIds: state.templateIds || [],
     customItems: state.customItems || [],
+    customTemplates: state.customTemplates || [],
     progress: state.progress || {},
     completedAt: state.completedAt || null,
   });
@@ -112,6 +113,33 @@ export const resetChecklist = async (fileId) => {
     cl.progress[itemId] = { ...cl.progress[itemId], checked: false };
   }
   cl.completedAt = null;
+  return await save(fileId, cl);
+};
+
+export const saveCustomTemplate = async (fileId, template) => {
+  const cl = await get(fileId) || {
+    templateIds: [], customItems: [], customTemplates: [], progress: {}, completedAt: null,
+  };
+  const customTemplates = [...(cl.customTemplates || []), template];
+  const templateIds = [...new Set([...(cl.templateIds || []), template.id])];
+  const newProgress = { ...cl.progress };
+  for (const item of template.items) {
+    if (!newProgress[item.id]) {
+      newProgress[item.id] = { checked: false, captureIds: [], templateId: template.id };
+    }
+  }
+  return await save(fileId, { ...cl, templateIds, customTemplates, progress: newProgress });
+};
+
+export const deleteCustomTemplate = async (fileId, templateId) => {
+  const cl = await get(fileId);
+  if (!cl) return null;
+  const template = (cl.customTemplates || []).find((t) => t.id === templateId);
+  if (template) {
+    for (const item of template.items) delete cl.progress[item.id];
+  }
+  cl.customTemplates = (cl.customTemplates || []).filter((t) => t.id !== templateId);
+  cl.templateIds = (cl.templateIds || []).filter((id) => id !== templateId);
   return await save(fileId, cl);
 };
 

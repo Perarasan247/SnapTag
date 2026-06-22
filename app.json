@@ -41,6 +41,11 @@
         }
       ],
       "expo-video"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "844238c1-3eeb-40b6-a0e7-3943b9753010"
+      }
+    }
   }
 }

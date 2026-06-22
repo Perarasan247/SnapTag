@@ -55,6 +55,18 @@ export const CHECKLIST_TEMPLATES = [
       { id: 'sf_4', label: 'First Aid Kit Present' },
     ],
   },
+  {
+    id: 'toilet_mapping',
+    name: 'Toilet Room Mapping',
+    icon: 'floor-plan',
+    items: [
+      { id: 'tm_1', label: 'Door — width, swing direction, threshold photo' },
+      { id: 'tm_2', label: 'Full room photo (wide-angle from doorway)' },
+      { id: 'tm_3', label: 'Toilet — position, flush type, cistern photo' },
+      { id: 'tm_4', label: 'Sink — position, tap type, under-sink clearance photo' },
+      { id: 'tm_5', label: 'Floor drain location + any step or level change' },
+    ],
+  },
 ];
 
 export const getTemplateById = (id) =>

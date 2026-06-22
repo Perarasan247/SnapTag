@@ -15,6 +15,7 @@ import ChecklistScreen from '../screens/ChecklistScreen';
 import ChecklistFormScreen from '../screens/ChecklistFormScreen';
 import SiteSetupScreen from '../screens/SiteSetupScreen';
 import TrashScreen from '../screens/TrashScreen';
+import SettingsScreen from '../screens/SettingsScreen';
 
 const Stack = createStackNavigator();
 
@@ -54,6 +55,7 @@ export default function AppNavigator() {
       <Stack.Screen name="ChecklistForm" component={ChecklistFormScreen} />
       <Stack.Screen name="SiteSetup" component={SiteSetupScreen} />
       <Stack.Screen name="Trash" component={TrashScreen} />
+      <Stack.Screen name="Settings" component={SettingsScreen} />
     </Stack.Navigator>
   );
 }

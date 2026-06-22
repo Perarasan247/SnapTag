@@ -40,7 +40,7 @@ For mobile (Expo Go): scan QR code. For web: press `w`.
 ## Environment variables (`.env`)
 
 ```
-EXPO_PUBLIC_API_URL=http://192.168.68.108:3001      # Mobile (LAN IP of server machine)
+EXPO_PUBLIC_API_URL=http://192.168.68.109:3001      # Mobile (LAN IP of server machine)
 EXPO_PUBLIC_API_URL_WEB=http://localhost:3001        # Web browser
 EXPO_PUBLIC_AWS_ACCESS_KEY_ID=...
 EXPO_PUBLIC_AWS_SECRET_ACCESS_KEY=...
